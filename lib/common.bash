@@ -1,0 +1,230 @@
+#!/usr/bin/env bash
+# Shared helpers for workday automation scripts
+set -euo pipefail
+
+SCRIPT_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+source "$SCRIPT_ROOT/config.bash"
+
+RODNEY="rodney"
+DEBUG_DIR="$SCRIPT_ROOT/debug"
+mkdir -p "$DEBUG_DIR"
+
+log() { echo "[$(date +%H:%M:%S)] $*"; }
+
+die() { log "ERROR: $*"; screenshot_debug "error"; exit 2; }
+
+screenshot_debug() {
+  local name="${1:-debug}"
+  $RODNEY screenshot "$DEBUG_DIR/${name}-$(date +%s).png" 2>/dev/null || true
+}
+
+ensure_browser() {
+  $RODNEY status &>/dev/null || die "Browser not running. Start with: ./scripts/start-browser.bash"
+}
+
+# Wait for an element to NOT exist (up to $2 seconds, default 10)
+wait_gone() {
+  local selector="$1"
+  local timeout="${2:-10}"
+  local deadline=$((SECONDS + timeout))
+  while (( SECONDS < deadline )); do
+    $RODNEY exists "$selector" &>/dev/null || return 0
+    sleep 0.5
+  done
+  return 1
+}
+
+nav_and_wait() {
+  log "Navigating to $1"
+  $RODNEY open "$1"
+  $RODNEY waitload
+  $RODNEY waitstable
+  $RODNEY waitidle
+  log "Page ready: $($RODNEY title)"
+}
+
+# Navigate to the week containing a given date.
+navigate_to_week() {
+  local target_date="$1"
+  local dom
+  dom=$(date -d "$target_date" +%-d)
+
+  if $RODNEY exists "[data-automation-id=\"dayCell-1-${dom}\"]" &>/dev/null; then
+    log "Already on correct week"
+    return 0
+  fi
+
+  local target_ts now_ts direction
+  target_ts=$(date -d "$target_date" +%s)
+  now_ts=$(date +%s)
+  direction="nextMonthButton"
+  (( target_ts < now_ts )) && direction="prevMonthButton"
+
+  for _ in $(seq 1 20); do
+    $RODNEY click "[data-automation-id=\"${direction}\"]"
+    $RODNEY waitstable
+    if $RODNEY exists "[data-automation-id=\"dayCell-1-${dom}\"]" &>/dev/null; then
+      log "Navigated to correct week"
+      return 0
+    fi
+  done
+  die "Could not navigate to week containing $target_date"
+}
+
+# NOTE: JS template variables (search, match, comment, hours) are interpolated
+# directly into JS strings. Don't pass values containing single quotes.
+
+# Click empty day column to open Enter Time dialog.
+# $1 = day index (0=Mon, 6=Sun)
+open_entry_dialog() {
+  local day_idx="$1"
+  local result
+  result=$($RODNEY js "
+(() => {
+  const sep = document.querySelector('[data-automation-id=\"nonTimedDaySeparator_${day_idx}\"]');
+  const scrollArea = document.querySelector('.scroll-area');
+  if (!sep || !scrollArea) return 'elements not found';
+  const left = sep.getBoundingClientRect().left;
+  const nextSep = document.querySelector('[data-automation-id=\"nonTimedDaySeparator_$((day_idx + 1))\"]');
+  const right = nextSep ? nextSep.getBoundingClientRect().left : scrollArea.getBoundingClientRect().right;
+  const x = (left + right) / 2;
+  const y = scrollArea.getBoundingClientRect().top + 150;
+  const el = document.elementFromPoint(x, y);
+  const opts = {bubbles:true, cancelable:true, clientX:x, clientY:y, button:0};
+  el.dispatchEvent(new MouseEvent('mousedown', opts));
+  el.dispatchEvent(new MouseEvent('mouseup', opts));
+  el.dispatchEvent(new MouseEvent('click', opts));
+  return 'clicked at ' + Math.round(x) + ',' + Math.round(y);
+})()
+")
+  log "Open dialog: $result"
+  $RODNEY wait '[data-automation-id="popUpDialog"]' || die "Enter Time dialog did not open"
+  log "Dialog opened"
+}
+
+# Select Time Type (project) in the open dialog.
+# $1 = search term (e.g. "PROJ-XXXXX")
+# $2 = match substring in result (e.g. "Development > AWS pilvi")
+select_time_type() {
+  local search="$1"
+  local match="$2"
+  local result
+  result=$($RODNEY js "
+(() => {
+  const input = document.querySelector('[data-automation-id=\"popUpDialog\"] input[placeholder=\"Search\"]');
+  if (!input) return 'search input not found';
+  input.focus();
+  input.click();
+  document.execCommand('insertText', false, '${search}');
+
+  const pressEnter = () => {
+    input.dispatchEvent(new KeyboardEvent('keydown', {key:'Enter', code:'Enter', keyCode:13, which:13, bubbles:true, cancelable:true}));
+    input.dispatchEvent(new KeyboardEvent('keypress', {key:'Enter', code:'Enter', keyCode:13, which:13, bubbles:true, cancelable:true}));
+    input.dispatchEvent(new KeyboardEvent('keyup', {key:'Enter', code:'Enter', keyCode:13, which:13, bubbles:true, cancelable:true}));
+  };
+
+  const findMatch = () => {
+    return [...document.querySelectorAll('[data-automation-id=\"promptOption\"]')].find(e => e.offsetParent !== null && e.textContent.includes('${match}'));
+  };
+
+  return new Promise((resolve) => {
+    let searchTriggered = false;
+    const observer = new MutationObserver(() => {
+      if (!searchTriggered) {
+        const expanded = document.querySelector('[data-automation-id=\"promptAriaInstruction\"]');
+        if (expanded && expanded.textContent.includes('Options Expanded')) {
+          searchTriggered = true;
+          pressEnter();
+        }
+        return;
+      }
+      const hit = findMatch();
+      if (hit) {
+        observer.disconnect();
+        hit.click();
+        resolve('selected: ' + hit.textContent.substring(0, 100));
+        return;
+      }
+    });
+    observer.observe(document.body, {childList: true, subtree: true});
+    setTimeout(() => {
+      observer.disconnect();
+      const hit = findMatch();
+      if (hit) { hit.click(); resolve('selected: ' + hit.textContent.substring(0, 100)); }
+      else {
+        const all = [...document.querySelectorAll('[data-automation-id=\"promptOption\"]')].filter(e => e.offsetParent !== null).map(e => e.textContent.substring(0,60));
+        resolve('no match. visible options: ' + JSON.stringify(all));
+      }
+    }, 10000);
+  });
+})()
+")
+  log "Time Type: $result"
+  [[ "$result" == selected:* ]] || die "Failed to select Time Type: $result"
+  # Wait for form to settle — selecting a Time Type may add/remove fields (Do Not Bill, Working time Type, etc.)
+  $RODNEY waitstable
+}
+
+# Set hours in the open dialog. $1 = hours (e.g. "7,5")
+set_hours() {
+  local hours="$1"
+  local result
+  result=$($RODNEY js "
+(() => {
+  const input = document.querySelector('[data-automation-id=\"popUpDialog\"] [data-automation-id=\"numericInput\"]');
+  if (!input) return 'hours input not found';
+  input.focus();
+  input.click();
+  document.execCommand('selectAll');
+  document.execCommand('delete');
+  document.execCommand('insertText', false, '${hours}');
+  return 'set: ' + input.value;
+})()
+")
+  log "Hours: $result"
+}
+
+# Set comment in the open dialog. $1 = comment text
+set_comment() {
+  local comment="$1"
+  [[ -z "$comment" ]] && return 0
+  local result
+  result=$($RODNEY js "
+(() => {
+  const ta = document.querySelector('[data-automation-id=\"popUpDialog\"] [data-automation-id=\"textAreaField\"]');
+  if (!ta) return 'comment field not found';
+  ta.focus();
+  ta.click();
+  document.execCommand('insertText', false, '${comment}');
+  return 'set: ' + ta.value;
+})()
+")
+  log "Comment: $result"
+}
+
+# Click OK to submit the entry
+click_ok() {
+  local result
+  result=$($RODNEY js "
+(() => {
+  const btns = [...document.querySelectorAll('[data-automation-id=\"popUpDialog\"] [data-automation-id=\"wd-CommandButton\"]')];
+  const ok = btns.find(b => b.textContent.trim() === 'OK');
+  if (ok) { ok.click(); return 'clicked'; }
+  return 'OK button not found';
+})()
+")
+  log "OK: $result"
+  [[ "$result" == "clicked" ]] || die "Failed to click OK: $result"
+  if ! wait_gone '[data-automation-id="popUpDialog"]' 10; then
+    screenshot_debug "ok-failed"
+    die "Dialog still open after clicking OK"
+  fi
+  log "Entry submitted"
+}
+
+# Get the day-of-week index (0=Mon..6=Sun) for a date string (YYYY-MM-DD)
+date_to_day_index() {
+  local dow
+  dow=$(date -d "$1" +%u)  # 1=Mon, 7=Sun
+  echo $((dow - 1))
+}
