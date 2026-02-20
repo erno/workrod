@@ -289,7 +289,7 @@ get_entry_ids() {
   return events
     .filter(e => e.getAttribute('data-automation-startdate') === '${startdate}')
     .filter(e => !e.textContent.includes('Balance (generated automatically)'))
-    .filter(e => !('${match}') || e.textContent.includes('${match}'))
+    .filter(e => '${match}' === '' || e.textContent.includes('${match}'))
     .map(e => e.getAttribute('data-automation-eventid'))
     .join('\n');
 })()
@@ -339,7 +339,7 @@ read_entry() {
   const cb = dlg.querySelector("[data-automation-id=\"checkboxPanel\"] input[type=\"checkbox\"]");
   return JSON.stringify({
     hours: hours ? hours.value : null,
-    comment: comment ? (comment.value || comment.textContent || null) : null,
+    comment: comment ? (comment.value ?? comment.textContent ?? null) : null,
     doNotBill: cb ? cb.checked : null
   });
 })()

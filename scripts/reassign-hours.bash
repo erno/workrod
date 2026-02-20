@@ -53,7 +53,7 @@ for date in "${DATES[@]}"; do
     day_idx=$(date_to_day_index "$date")
     open_entry_dialog "$day_idx"
     select_time_type "$NEW_SEARCH" "$NEW_MATCH"
-    set_do_not_bill "$do_not_bill"
+    [[ "$do_not_bill" != "null" ]] && set_do_not_bill "$do_not_bill"
     set_hours "$hours"
     set_comment "$comment"
     click_ok
