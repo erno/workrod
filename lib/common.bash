@@ -54,11 +54,25 @@ navigate_to_week() {
     return 0
   fi
 
-  local target_ts now_ts direction
+  # Determine direction from the first visible dayCell, not from wall clock
+  local displayed_date direction
+  displayed_date=$($RODNEY js '
+(() => {
+  const cell = document.querySelector("[data-automation-id^=\"dayCell-1-\"]");
+  if (!cell) return "";
+  const txt = cell.textContent.trim();
+  const m = txt.match(/(\d+)\.(\d+)\./);
+  if (!m) return "";
+  const title = document.querySelector("[data-automation-id=\"dateRangeTitle\"]").textContent;
+  const ym = title.match(/(\d{4})/);
+  return ym[1] + "-" + m[2].padStart(2,"0") + "-" + m[1].padStart(2,"0");
+})()
+')
+  local target_ts displayed_ts
   target_ts=$(date -d "$target_date" +%s)
-  now_ts=$(date +%s)
+  displayed_ts=$(date -d "$displayed_date" +%s)
   direction="nextMonthButton"
-  (( target_ts < now_ts )) && direction="prevMonthButton"
+  (( target_ts < displayed_ts )) && direction="prevMonthButton"
 
   for _ in $(seq 1 20); do
     $RODNEY click "[data-automation-id=\"${direction}\"]"

@@ -126,3 +126,4 @@ Key takeaway: opening a new time entry requires dispatching mousedown+mouseup+cl
 - **2026-02-18** — Initial plan created. Rodney v0.4.0 confirmed in PATH.
 - **2026-02-18** — Mapped DOM selectors. Cracked Time Type picker interaction. Built and tested working `enter-hours.bash` script. Stage 1 MVP complete.
 - **2026-02-19** — Refactored to stock rodney: launch Chrome with `--remote-debugging-port`, use `rodney connect`. No patched binary needed.
+- **2026-02-20** — Fixed week navigation: direction was based on wall clock (`now`) instead of the currently displayed week, causing infinite backward clicks when navigating to today from a past week. Now reads the displayed week from the DOM to determine direction.
