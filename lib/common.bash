@@ -127,9 +127,13 @@ select_time_type() {
 (() => {
   const input = document.querySelector('[data-automation-id=\"popUpDialog\"] input[placeholder=\"Search\"]');
   if (!input) return 'search input not found';
-  input.focus();
-  input.click();
-  document.execCommand('insertText', false, '${search}');
+
+  const tryType = () => {
+    input.focus();
+    input.click();
+    document.execCommand('insertText', false, '${search}');
+    return input.value.length > 0;
+  };
 
   const pressEnter = () => {
     input.dispatchEvent(new KeyboardEvent('keydown', {key:'Enter', code:'Enter', keyCode:13, which:13, bubbles:true, cancelable:true}));
@@ -142,34 +146,42 @@ select_time_type() {
   };
 
   return new Promise((resolve) => {
-    let searchTriggered = false;
-    const observer = new MutationObserver(() => {
-      if (!searchTriggered) {
-        const expanded = document.querySelector('[data-automation-id=\"promptAriaInstruction\"]');
-        if (expanded && expanded.textContent.includes('Options Expanded')) {
-          searchTriggered = true;
-          pressEnter();
+    const startSearch = () => {
+      let searchTriggered = false;
+      const observer = new MutationObserver(() => {
+        if (!searchTriggered) {
+          const expanded = document.querySelector('[data-automation-id=\"promptAriaInstruction\"]');
+          if (expanded && expanded.textContent.includes('Options Expanded')) {
+            searchTriggered = true;
+            pressEnter();
+          }
+          return;
         }
-        return;
-      }
-      const hit = findMatch();
-      if (hit) {
+        const hit = findMatch();
+        if (hit) {
+          observer.disconnect();
+          hit.click();
+          resolve('selected: ' + hit.textContent.substring(0, 100));
+        }
+      });
+      observer.observe(document.body, {childList: true, subtree: true});
+      setTimeout(() => {
         observer.disconnect();
-        hit.click();
-        resolve('selected: ' + hit.textContent.substring(0, 100));
-        return;
-      }
-    });
-    observer.observe(document.body, {childList: true, subtree: true});
-    setTimeout(() => {
-      observer.disconnect();
-      const hit = findMatch();
-      if (hit) { hit.click(); resolve('selected: ' + hit.textContent.substring(0, 100)); }
-      else {
-        const all = [...document.querySelectorAll('[data-automation-id=\"promptOption\"]')].filter(e => e.offsetParent !== null).map(e => e.textContent.substring(0,60));
-        resolve('no match. visible options: ' + JSON.stringify(all));
-      }
-    }, 10000);
+        const hit = findMatch();
+        if (hit) { hit.click(); resolve('selected: ' + hit.textContent.substring(0, 100)); }
+        else {
+          const all = [...document.querySelectorAll('[data-automation-id=\"promptOption\"]')].filter(e => e.offsetParent !== null).map(e => e.textContent.substring(0,60));
+          resolve('no match. visible options: ' + JSON.stringify(all));
+        }
+      }, 10000);
+    };
+
+    const attempt = (retries) => {
+      if (tryType()) { startSearch(); return; }
+      if (retries > 0) { setTimeout(() => attempt(retries - 1), 300); return; }
+      resolve('insertText failed');
+    };
+    attempt(5);
   });
 })()
 ")
@@ -177,6 +189,24 @@ select_time_type() {
   [[ "$result" == selected:* ]] || die "Failed to select Time Type: $result"
   # Wait for form to settle — selecting a Time Type may add/remove fields (Do Not Bill, Working time Type, etc.)
   $RODNEY waitstable
+}
+
+# Set the "Do Not Bill" checkbox. $1 = desired state ("True"/"true" or "False"/"false")
+set_do_not_bill() {
+  local desired
+  [[ "${1,,}" == "true" ]] && desired="true" || desired="false"
+  local result
+  result=$($RODNEY js "
+(() => {
+  const dlg = document.querySelector('[data-automation-id=\"popUpDialog\"]');
+  const cb = dlg.querySelector('[data-automation-id=\"checkboxPanel\"] input[type=\"checkbox\"]');
+  if (!cb) return 'no checkbox';
+  if (cb.checked === ${desired}) return 'already ' + cb.checked;
+  cb.click();
+  return 'set to ' + cb.checked;
+})()
+")
+  log "Do Not Bill: $result"
 }
 
 # Set hours in the open dialog. $1 = hours (e.g. "7,5")
@@ -241,4 +271,100 @@ date_to_day_index() {
   local dow
   dow=$(date -d "$1" +%u)  # 1=Mon, 7=Sun
   echo $((dow - 1))
+}
+
+# Get calendar event IDs for a date, optionally filtered by text match.
+# $1 = date (YYYY-MM-DD), $2 = match substring (optional)
+# Outputs one event ID per line.
+get_entry_ids() {
+  local date="$1"
+  local match="${2:-}"
+  local month day startdate
+  month=$(date -d "$date" +%-m)
+  day=$(date -d "$date" +%-d)
+  startdate="${month}-${day}-0-0"
+  $RODNEY js "
+(() => {
+  const events = [...document.querySelectorAll('[data-automation-id=\"calendarevent\"]')];
+  return events
+    .filter(e => e.getAttribute('data-automation-startdate') === '${startdate}')
+    .filter(e => !e.textContent.includes('Balance (generated automatically)'))
+    .filter(e => !('${match}') || e.textContent.includes('${match}'))
+    .map(e => e.getAttribute('data-automation-eventid'))
+    .join('\n');
+})()
+"
+}
+
+# Open an existing entry by event ID.
+open_existing_entry() {
+  local eventid="$1"
+  $RODNEY click "[data-automation-id=\"calendarevent\"][data-automation-eventid=\"${eventid}\"]"
+  $RODNEY wait '[data-automation-id="popUpDialog"]' || die "Dialog did not open for event $eventid"
+}
+
+# Parse a date range string. Outputs one YYYY-MM-DD per line.
+# Accepts: YYYY-MM-DD (single), YYYY-MM-DD..YYYY-MM-DD (range), "today", "this-week"
+expand_dates() {
+  local spec="$1"
+  case "$spec" in
+    today) date +%Y-%m-%d ;;
+    this-week)
+      local mon
+      mon=$(date -d "last monday" +%Y-%m-%d 2>/dev/null)
+      # If today is monday, "last monday" gives last week
+      [[ "$(date +%u)" == "1" ]] && mon=$(date +%Y-%m-%d)
+      for i in $(seq 0 4); do date -d "$mon + $i days" +%Y-%m-%d; done
+      ;;
+    *..*)
+      local start="${spec%..*}" end="${spec#*..}"
+      local cur="$start"
+      while [[ "$cur" < "$end" || "$cur" == "$end" ]]; do
+        echo "$cur"
+        cur=$(date -d "$cur + 1 day" +%Y-%m-%d)
+      done
+      ;;
+    *) echo "$spec" ;;
+  esac
+}
+
+# Read fields from an open entry dialog. Outputs JSON.
+read_entry() {
+  $RODNEY js '
+(() => {
+  const dlg = document.querySelector("[data-automation-id=\"popUpDialog\"]");
+  if (!dlg) return JSON.stringify({error: "no dialog"});
+  const hours = dlg.querySelector("[data-automation-id=\"numericInput\"]");
+  const comment = dlg.querySelector("[data-automation-id=\"textAreaField\"]");
+  const cb = dlg.querySelector("[data-automation-id=\"checkboxPanel\"] input[type=\"checkbox\"]");
+  return JSON.stringify({
+    hours: hours ? hours.value : null,
+    comment: comment ? (comment.value || comment.textContent || null) : null,
+    doNotBill: cb ? cb.checked : null
+  });
+})()
+'
+}
+
+# Delete the currently open entry (clicks Delete, confirms).
+delete_entry() {
+  local result
+  result=$($RODNEY js '
+(() => {
+  const btns = [...document.querySelectorAll("[data-automation-id=\"popUpDialog\"] [data-automation-id=\"wd-CommandButton\"]")];
+  const del = btns.find(b => b.textContent.trim() === "Delete");
+  if (del) { del.click(); return "clicked"; }
+  return "no delete button";
+})()
+')
+  log "Delete: $result"
+  [[ "$result" == "clicked" ]] || die "Failed to click Delete: $result"
+  $RODNEY wait '[data-automation-id="wd-CommandButton_uic_okButton"]' || die "Delete confirmation did not appear"
+  $RODNEY click '[data-automation-id="wd-CommandButton_uic_okButton"]'
+  $RODNEY waitstable
+  if ! wait_gone '[data-automation-id="popUpDialog"]' 10; then
+    screenshot_debug "delete-failed"
+    die "Dialog still open after delete confirmation"
+  fi
+  log "Entry deleted"
 }

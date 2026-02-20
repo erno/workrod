@@ -207,6 +207,17 @@ Appears when cancelling/closing the Enter Time dialog after making changes (e.g.
 | Discard | `[data-automation-id="wd-CommandButton_uic_genericYesButton"]` | Discards changes, closes both dialogs |
 | Continue | `[data-automation-id="uic_genericNoButton"]` | Returns to the Enter Time dialog |
 
+## "Delete Time Block" confirmation dialog
+
+Appears after clicking Delete on an existing entry.
+
+| Button | Selector |
+|--------|----------|
+| OK | `[data-automation-id="wd-CommandButton_uic_okButton"]` |
+| Cancel | `[data-automation-id="wd-CommandButton_uic_cancelButton"]` |
+
+Note: this OK button has a different `data-automation-id` than the entry dialog's OK button.
+
 ## JS evaluation quirks with rodney
 
 - rodney wraps expressions in `() => { return (expr); }`
