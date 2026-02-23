@@ -248,9 +248,11 @@ set_comment() {
 
 # Click OK to submit the entry
 click_ok() {
+  $RODNEY waitstable
   local result
   result=$($RODNEY js "
 (() => {
+  document.activeElement && document.activeElement.blur();
   const btns = [...document.querySelectorAll('[data-automation-id=\"popUpDialog\"] [data-automation-id=\"wd-CommandButton\"]')];
   const ok = btns.find(b => b.textContent.trim() === 'OK');
   if (ok) { ok.click(); return 'clicked'; }
