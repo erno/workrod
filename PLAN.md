@@ -30,12 +30,13 @@ spare-the-rod-spoil-the-workday/
 │   └── common.bash            # rodney wrappers, helpers, all Workday interaction logic
 ├── scripts/
 │   ├── start-browser.bash     # launch Chrome + rodney connect
-│   └── enter-hours.bash       # enter hours for a given date
+│   ├── enter-hours.bash       # enter hours for a given date
+│   └── reassign-hours.bash    # reassign entries to a different project/subproject
 ├── debug/                     # screenshots for debugging (gitignored)
 └── .rodney/                   # Chrome data dir + pid (gitignored)
 ```
 
-- Bash scripts — no extra dependencies beyond stock rodney + Chrome + standard unix tools
+- Bash scripts — no extra dependencies beyond stock rodney + Chrome + jq + standard unix tools
 - Chrome launched manually with `--remote-debugging-port=19222`, rodney connects to it
 - Chrome data dir persists in `.rodney/chrome-data/` for session reuse
 - Each script sources `lib/common.bash` for shared setup
@@ -53,6 +54,13 @@ Implemented:
 - `click_ok` — submit and verify dialog closes
 - `date_to_day_index <date>` — convert YYYY-MM-DD to 0=Mon..6=Sun
 - `log`, `die`, `screenshot_debug` — logging and error handling
+- `set_do_not_bill <true|false>` — toggle the Do Not Bill checkbox
+- `read_entry` — read hours/comment/doNotBill from open dialog (JSON)
+- `delete_entry` — delete entry with two-step confirmation
+- `get_entry_ids <date> [match]` — list event IDs for a date, optional text filter
+- `open_existing_entry <eventid>` — click an existing entry by event ID
+- `expand_dates <spec>` — parse date specs (YYYY-MM-DD, range with `..`, `today`, `this-week`)
+- `wait_gone <selector> [timeout]` — wait for element to disappear
 
 ## Scope
 
@@ -60,7 +68,9 @@ Implemented:
 Automate entering hours for a given day/period. Input: date(s), project, hours, description. Script fills in the time tracking form.
 
 ### Stage 2: Revise existing hours
-View and modify already-entered hours for a month — e.g. reassign hours to a different project, adjust descriptions or amounts.
+Reassign entries from one project/subproject to another, preserving hours and comments. Handles Do Not Bill checkbox state.
+
+Implemented: `reassign-hours.bash` — delete + recreate with new project for a date or date range, filtered by old project match string.
 
 ## Target app
 
@@ -109,8 +119,9 @@ Key takeaway: opening a new time entry requires dispatching mousedown+mouseup+cl
 - [x] ~~Stock rodney compatibility~~ — solved: launch Chrome ourselves, use `rodney connect`
 - [ ] Hardcoded sleeps in common.bash — replace with DOM-based waits for robustness
 - [ ] Input format for batch entry — currently CLI args, could add CSV/config file support
-- [ ] Multiple projects per day — untested, should work by running script twice for same date
+- [x] ~~Multiple projects per day~~ — works: filter entries by match string, reassign selectively
 - [ ] Error handling for duplicate entries — what happens if entry already exists for that day+project?
+- [ ] `list-hours.bash` — show entries for a week (currently only via browser)
 
 ## Conventions
 
@@ -127,3 +138,4 @@ Key takeaway: opening a new time entry requires dispatching mousedown+mouseup+cl
 - **2026-02-18** — Mapped DOM selectors. Cracked Time Type picker interaction. Built and tested working `enter-hours.bash` script. Stage 1 MVP complete.
 - **2026-02-19** — Refactored to stock rodney: launch Chrome with `--remote-debugging-port`, use `rodney connect`. No patched binary needed.
 - **2026-02-20** — Fixed week navigation: direction was based on wall clock (`now`) instead of the currently displayed week, causing infinite backward clicks when navigating to today from a past week. Now reads the displayed week from the DOM to determine direction.
+- **2026-02-20** — Stage 2 MVP: reassign-hours.bash, entry read/delete helpers, Do Not Bill support, `--set-billable yes|no` flag on enter-hours. Shellcheck clean.
