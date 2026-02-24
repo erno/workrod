@@ -9,3 +9,4 @@ WORKDAY_URL='https://wd3.myworkday.com/<company>/d/task/2998$10895.htmld'
 # PROJECT_MATCH: A substring that uniquely identifies the correct project in the dropdown results
 PROJECT_SEARCH='PROJ-XXXXX'
 PROJECT_MATCH='Development > Project Name'
+DEFAULT_COMMENT=''

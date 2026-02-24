@@ -22,7 +22,7 @@ DATE="${1:?Usage: $0 [--set-billable yes|no] DATE HOURS [PROJECT_SEARCH] [PROJEC
 HOURS="${2:?Usage: $0 [--set-billable yes|no] DATE HOURS [PROJECT_SEARCH] [PROJECT_MATCH] [COMMENT]}"
 SEARCH="${3:-$PROJECT_SEARCH}"
 MATCH="${4:-$PROJECT_MATCH}"
-COMMENT="${5:-}"
+COMMENT="${5:-$DEFAULT_COMMENT}"
 
 [[ "$DATE" == "today" ]] && DATE=$(date +%Y-%m-%d)
 

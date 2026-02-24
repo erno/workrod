@@ -295,7 +295,7 @@ get_entry_ids() {
     .map(e => e.getAttribute('data-automation-eventid'))
     .join('\n');
 })()
-"
+" | sed '/^$/d'
 }
 
 # Open an existing entry by event ID.
